@@ -129,7 +129,9 @@ const actualizarEmpleado = async (req, res) => {
       cargoAnterior &&
       String(cargoAnterior) !== String(cargoNuevo)
     ) {
-      const hoy = new Date().toISOString().split("T")[0];
+      // Colombia = UTC-5, sin horario de verano
+      const ahoraCol = new Date(Date.now() - 5 * 60 * 60 * 1000);
+      const hoy = ahoraCol.toISOString().split("T")[0];
 
       // Buscar si hay un registro abierto (sin fecha_fin) para cerrar su período
       const registroAbierto = await historialService.obtenerRegistroAbierto(Number(id));
