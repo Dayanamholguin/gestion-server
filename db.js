@@ -12,6 +12,13 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
+});
+
+// Evita crash cuando MySQL cierra conexiones inactivas (wait_timeout / código 4031)
+pool.on("error", (err) => {
+  console.warn("[db] Conexión del pool cerrada por el servidor, se reconectará automáticamente:", err.message);
 });
 
 pool.getConnection((err, conn) => {
@@ -19,7 +26,7 @@ pool.getConnection((err, conn) => {
     console.error("Error conectando a la base de datos:", err.message);
     return;
   }
-  console.log("Conectado a MySQL");
+  console.log("connected to mysql database");
   conn.release();
 });
 
