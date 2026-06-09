@@ -270,6 +270,84 @@ const verificarDocumento = async (req, res) => {
   }
 };
 
+const descargarPlantilla = async (req, res) => {
+  try {
+    const wb = await empleadoService.generarPlantillaExcel();
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="plantilla_empleados.xlsx"'
+    );
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const importarEmpleadosCtrl = async (req, res) => {
+  try {
+    if (!tienePermiso(req, "empleados:crear")) {
+      return res.status(403).json({ error: "No tienes permiso para importar empleados" });
+    }
+
+    const { empleados } = req.body;
+    if (!Array.isArray(empleados) || empleados.length === 0) {
+      return res.status(400).json({ error: "No se recibieron empleados para importar" });
+    }
+    if (empleados.length > 500) {
+      return res.status(400).json({ error: "Máximo 500 empleados por importación" });
+    }
+
+    const usuarioId = req.usuario?.id || null;
+    const resultado = await empleadoService.importarEmpleados(empleados, usuarioId);
+
+    if (!resultado.ok) {
+      return res.status(422).json(resultado);
+    }
+
+    // Fire-and-forget: historial inicial + usuario para cada empleado insertado
+    for (const emp of resultado.insertados) {
+      historialService.crearHistorial({
+        empleado_id:      emp.id,
+        cargo_id:         emp.cargo_id,
+        tipo_contrato_id: emp.tipo_contrato_id,
+        salario:          emp.salario,
+        fecha_inicio:     emp.fecha_ingreso,
+        fecha_fin:        null,
+        motivo:           null,
+      }).catch(err => console.warn("[Import historial]", err.message));
+
+      if (emp.correo && emp.documento) {
+        usuariosService.crear({
+          nombre:      emp.nombre,
+          apellido:    emp.apellido,
+          correo:      emp.correo,
+          password:    emp.documento,
+          rol_id:      3,
+          empleado_id: emp.id,
+        }).catch(err => console.warn("[Import usuario]", err.message));
+      }
+
+      auditoria.registrar({
+        tabla:      "tb_empleados",
+        registroId: emp.id,
+        accion:     "CREATE",
+        despues:    emp,
+        usuarioId,
+        ip:         req.ip,
+      });
+    }
+
+    res.status(201).json({ ok: true, insertados: resultado.insertados.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   obtenerEmpleados,
   crearEmpleado,
@@ -277,4 +355,6 @@ module.exports = {
   eliminarEmpleado,
   actualizarEstadoMasivo,
   verificarDocumento,
+  descargarPlantilla,
+  importarEmpleados: importarEmpleadosCtrl,
 };

@@ -16,6 +16,10 @@ const estudiosRoutes        = require("./routes/estudios.routes");
 const experienciaLaboralRoutes = require("./routes/experiencia-laboral.routes");
 const catalogosRoutes       = require("./routes/catalogos.routes");
 const universidadesRoutes   = require("./routes/universidades.routes");
+const vacacionesRoutes      = require("./routes/vacaciones.routes");
+const configuracionRoutes   = require("./routes/configuracion.routes");
+const sedesRoutes           = require("./routes/sedes.routes");
+const dashboardRoutes       = require("./routes/dashboard.routes");
 
 const app = express();
 
@@ -49,5 +53,9 @@ app.use("/historial-cargos",   historialCargosRoutes);
 app.use("/estudios",           estudiosRoutes);
 app.use("/experiencia-laboral", experienciaLaboralRoutes);
 app.use("/universidades",      universidadesRoutes);
+app.use("/vacaciones",         vacacionesRoutes);
+app.use("/configuracion",      configuracionRoutes);
+app.use("/sedes",              sedesRoutes);
+app.use("/dashboard",          dashboardRoutes);
 
 module.exports = app;
