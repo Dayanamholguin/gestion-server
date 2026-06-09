@@ -55,10 +55,12 @@ const login = (correo, password) => {
         expiresIn: process.env.JWT_EXPIRES_IN || "8h",
       });
 
+      const prevUltimoAcceso = user.ultimo_acceso || null;
+
       // Actualizar último acceso (fire-and-forget)
       db.query("UPDATE tb_usuarios SET ultimo_acceso = NOW() WHERE id = ?", [user.id]);
 
-      resolve({ token, usuario: payload });
+      resolve({ token, usuario: payload, ultimo_acceso: prevUltimoAcceso });
     });
   });
 };

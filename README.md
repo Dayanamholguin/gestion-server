@@ -1,6 +1,8 @@
-# 🖥️ API — Sistema de Gestión de RRHH (empresa COL)
+# API — Sistema de Gestión de RRHH (empresa COL)
 
-Backend REST construido con **Node.js + Express 5** y **MySQL**, que expone todos los servicios del sistema de gestión de recursos humanos.
+Backend REST construido con **Node.js + Express 5** y **MySQL**, que expone todos los servicios del sistema de gestión de recursos humanos. Desplegado en producción en **Railway**.
+
+**URL de producción:** https://laudable-light-production-ef9f.up.railway.app
 
 ---
 
@@ -11,7 +13,11 @@ Este servidor provee la API que consume el frontend de gestión de RRHH. Cubre:
 - Autenticación con JWT y control de acceso por roles (ADMIN, RRHH, EMPLEADO)
 - Gestión completa de empleados con historial automático de cambios de cargo
 - Secciones por empleado: estudios académicos y experiencia laboral con reordenamiento drag & drop persistido
-- Catálogos: cargos, empresas, universidades, tipos de contrato, estados, niveles educativos
+- Gestión de vacaciones con ciclo de vida completo (pendiente → aprobada/rechazada)
+- Dashboard con métricas agregadas filtradas por sede
+- Importación masiva de empleados desde Excel con validación todo-o-nada
+- Configuración de la empresa: datos generales, días laborales y CRUD de sedes
+- Catálogos: cargos, empresas externas, universidades, tipos de contrato, estados, niveles educativos
 - Gestión de usuarios del sistema
 - Log de auditoría completo (CREATE / UPDATE / DELETE) con snapshots antes/después
 
@@ -28,7 +34,7 @@ Este servidor provee la API que consume el frontend de gestión de RRHH. Cubre:
 | jsonwebtoken | 9.x | Generación y verificación de JWT |
 | dotenv | 17.x | Variables de entorno |
 | cors | 2.x | CORS habilitado para el cliente React |
-| swagger-ui-express | — | Interfaz interactiva de documentación API |
+| exceljs | — | Generación de plantillas Excel con dropdowns reales |
 | nodemon | 3.x | Recarga automática en desarrollo |
 
 ---
@@ -36,22 +42,16 @@ Este servidor provee la API que consume el frontend de gestión de RRHH. Cubre:
 ## Requisitos previos
 
 - Node.js 18 o superior
-- MySQL 8.x corriendo en el puerto **3307** (configurable)
-- Base de datos `db_gestionEmpleadosTienda` creada con todas sus tablas
+- MySQL 8.x corriendo en el puerto **3307** (configurable en `.env`)
+- Base de datos `db_gestionEmpleadosTienda` creada con todas sus tablas y migraciones
 
 ---
 
 ## Instalación
 
 ```bash
-# 1. Entrar a la carpeta del servidor
 cd server
-
-# 2. Instalar dependencias
 npm install
-
-# 3. Crear el archivo de entorno
-cp .env.example .env   # o crear .env manualmente (ver sección siguiente)
 ```
 
 ### Variables de entorno (`.env`)
@@ -67,45 +67,45 @@ JWT_SECRET=tu_clave_secreta_muy_larga
 AUTH_ENABLED=false
 ```
 
-> **`AUTH_ENABLED=false`** (valor por defecto): el middleware de autenticación asigna un usuario ADMIN virtual con permisos totales. Ideal para desarrollo.  
-> **`AUTH_ENABLED=true`**: exige JWT Bearer válido en cada petición protegida.
-
-### Columnas adicionales requeridas en la BD
-
-Si la base de datos ya existe desde una versión anterior, ejecutar:
-
-```sql
-ALTER TABLE tb_historial_cargos    ADD COLUMN orden INT DEFAULT 0;
-ALTER TABLE tb_experiencia_laboral ADD COLUMN orden INT DEFAULT 0;
-```
+> **`AUTH_ENABLED=false`** (por defecto en desarrollo): asigna usuario ADMIN virtual con permisos totales — no exige JWT.  
+> **`AUTH_ENABLED=true`**: exige JWT Bearer válido en cada petición protegida (usar en producción).
 
 ---
 
 ## Ejecución
 
 ```bash
-# Modo desarrollo (nodemon — recarga automática)
-npm run dev
-
-# Modo producción
-npm start
+npm run dev    # Desarrollo (nodemon — recarga automática)
+npm start      # Producción
 ```
 
 El servidor queda disponible en **`http://localhost:3001`**.
 
 ---
 
-## Documentación interactiva (Swagger)
+## Migraciones de base de datos
 
-Con el servidor corriendo, abrir en el navegador:
+Ejecutar en orden los archivos de `server/migrations/` cuando la BD ya existe desde una versión anterior:
 
+```sql
+-- Orden drag-and-drop en historial y experiencia
+ALTER TABLE tb_historial_cargos     ADD COLUMN orden INT DEFAULT 0;
+ALTER TABLE tb_experiencia_laboral  ADD COLUMN orden INT DEFAULT 0;
+
+-- Último acceso del usuario
+ALTER TABLE tb_usuarios ADD COLUMN ultimo_acceso DATETIME DEFAULT NULL;
+
+-- Sede del empleado
+ALTER TABLE tb_empleados ADD COLUMN sede_id INT DEFAULT NULL;
+ALTER TABLE tb_empleados ADD CONSTRAINT fk_empleados_sede
+  FOREIGN KEY (sede_id) REFERENCES tb_sedes(id);
 ```
-http://localhost:3001/api-docs
-```
 
-Swagger UI muestra todos los endpoints con sus esquemas de request/response, parámetros y posibilidad de probarlos directamente desde el navegador.
-
-> Cuando `AUTH_ENABLED=true`, usar el botón **Authorize** en Swagger UI e ingresar el token obtenido de `POST /auth/login`.
+Los archivos `.sql` en `server/migrations/` contienen las migraciones completas para:
+- `add_configuracion_laboral.sql` — tabla de días laborales (fila única)
+- `add_empresa_config_sedes.sql` — tabla de configuración de empresa y sedes
+- `add_vacaciones.sql` — tabla de vacaciones y permisos de roles
+- `add_estados_empleado.sql` — estados completos del empleado (Activo, Inactivo, Licencia, Vacaciones, Suspendido, Reingreso)
 
 ---
 
@@ -113,15 +113,14 @@ Swagger UI muestra todos los endpoints con sus esquemas de request/response, par
 
 ```
 server/
-├── app.js                  ← Configura Express, CORS, middlewares y monta rutas
-├── server.js               ← Solo llama app.listen(3001)
-├── swagger.js              ← Especificación OpenAPI 3.0 completa
-├── db.js                   ← Pool de conexiones MySQL2
-├── .env                    ← Variables de entorno (no subir a git)
+├── app.js                      ← Configura Express, CORS, middlewares y monta rutas
+├── server.js                   ← Solo llama app.listen(3001)
+├── db.js                       ← Pool MySQL2 con keep-alive
+├── .env                        ← Variables de entorno (no subir a git)
 │
-├── routes/                 ← Define los endpoints y conecta con controllers
+├── routes/                     ← Define los endpoints y conecta con controllers
 │   ├── auth.routes.js
-│   ├── empleados.routes.js
+│   ├── empleados.routes.js     ← Incluye GET /plantilla y POST /importar
 │   ├── historial-cargos.routes.js
 │   ├── estudios.routes.js
 │   ├── experiencia-laboral.routes.js
@@ -130,14 +129,19 @@ server/
 │   ├── universidades.routes.js
 │   ├── usuarios.routes.js
 │   ├── auditoria.routes.js
-│   └── catalogos.routes.js
+│   ├── catalogos.routes.js
+│   ├── vacaciones.routes.js
+│   ├── configuracion.routes.js ← GET/PUT /laboral, GET/PUT /empresa
+│   ├── sedes.routes.js         ← CRUD de sedes
+│   └── dashboard.routes.js
 │
-├── controllers/            ← Recibe la request, valida permisos, llama al servicio
-├── services/               ← Lógica de negocio + consultas SQL (mysql2 callbacks → Promises)
-├── validations/            ← Validaciones síncronas de campos requeridos
-└── middleware/
-    ├── authMiddleware.js   ← Verifica JWT / asigna usuario virtual
-    └── checkPermiso.js     ← Middleware factory para validar permisos RBAC
+├── controllers/                ← Recibe request, valida permisos, llama al servicio
+├── services/                   ← Lógica de negocio + SQL (mysql2 callbacks → Promises)
+├── validations/                ← Validaciones síncronas de campos requeridos
+├── middleware/
+│   ├── authMiddleware.js       ← Verifica JWT / asigna usuario virtual
+│   └── checkPermiso.js         ← Middleware factory para validar permisos RBAC
+└── migrations/                 ← Archivos .sql para ejecutar manualmente en Railway
 ```
 
 **Flujo de una petición:**
@@ -149,28 +153,73 @@ Cliente → routes → [authMiddleware] → [checkPermiso] → controller → se
 
 ## Resumen de endpoints
 
+### Autenticación
 | Método | Endpoint | Descripción | Permiso |
 |---|---|---|---|
 | POST | `/auth/login` | Iniciar sesión | Público |
 | GET | `/auth/me` | Usuario en sesión | Autenticado |
 | PUT | `/auth/password` | Cambiar contraseña | Autenticado |
+
+### Empleados
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
 | GET | `/empleados` | Listar empleados | `empleados:listar` |
 | POST | `/empleados` | Crear empleado | `empleados:crear` |
 | PUT | `/empleados/:id` | Actualizar empleado | `editar_total` / `editar_propio` |
-| DELETE | `/empleados/:id` | Eliminar empleado | `empleados:desactivar` |
+| DELETE | `/empleados/:id` | Desactivar empleado | `empleados:desactivar` |
 | PUT | `/empleados/estado-masivo` | Cambio de estado masivo | `empleados:desactivar` |
-| GET | `/empleados/documento/:doc` | Verificar documento único | Autenticado |
-| GET | `/historial-cargos/empleado/:id` | Historial de cargos | Autenticado |
-| PUT | `/historial-cargos/reorder` | Guardar orden drag & drop | Autenticado |
-| GET | `/estudios/empleado/:id` | Estudios del empleado | Autenticado |
-| PUT | `/estudios/empleado/:id/orden` | Guardar orden estudios | Autenticado |
-| POST/PUT/DELETE | `/estudios` | CRUD estudios | Autenticado |
-| GET | `/experiencia-laboral/empleado/:id` | Experiencia laboral | Autenticado |
-| PUT | `/experiencia-laboral/reorder` | Guardar orden drag & drop | Autenticado |
-| POST/PUT/DELETE | `/experiencia-laboral` | CRUD experiencia | Autenticado |
-| GET/POST/PUT | `/cargos` | Catálogo de cargos | Autenticado |
-| GET/POST/PUT | `/empresas` | Catálogo de empresas | Autenticado |
-| GET/POST/PUT | `/universidades` | Catálogo de universidades | Autenticado |
+| GET | `/empleados/documento/:doc[/:id]` | Verificar documento único | Autenticado |
+| GET | `/empleados/plantilla` | Descargar plantilla Excel | `empleados:crear` |
+| POST | `/empleados/importar` | Importar empleados desde Excel | `empleados:crear` |
+
+### Historial, Estudios, Experiencia
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/historial-cargos/empleado/:id` | Historial de cargos |
+| PUT | `/historial-cargos/reorder` | Guardar orden drag & drop |
+| GET | `/estudios/empleado/:id` | Estudios del empleado |
+| PUT | `/estudios/empleado/:id/orden` | Guardar orden estudios |
+| POST/PUT/DELETE | `/estudios[/:id]` | CRUD estudios |
+| GET | `/experiencia-laboral/empleado/:id` | Experiencia laboral |
+| PUT | `/experiencia-laboral/reorder` | Guardar orden drag & drop |
+| POST/PUT/DELETE | `/experiencia-laboral[/:id]` | CRUD experiencia |
+
+### Vacaciones
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
+| GET | `/vacaciones` | Listar (todas o propias según rol) | Autenticado |
+| POST | `/vacaciones` | Solicitar vacaciones | `vacaciones:solicitar` |
+| PUT | `/vacaciones/:id/aprobar` | Aprobar solicitud | `vacaciones:gestionar` |
+| PUT | `/vacaciones/:id/rechazar` | Rechazar solicitud | `vacaciones:gestionar` |
+| DELETE | `/vacaciones/:id` | Cancelar solicitud (soft-delete) | Autenticado |
+
+### Configuración
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
+| GET | `/configuracion/laboral` | Días laborales | Autenticado |
+| PUT | `/configuracion/laboral` | Actualizar días laborales | Solo ADMIN (en controller) |
+| GET | `/configuracion/empresa` | Datos de la empresa | Autenticado |
+| PUT | `/configuracion/empresa` | Actualizar nombre/NIT | Solo ADMIN (en controller) |
+
+### Sedes
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
+| GET | `/sedes[?activas=true]` | Listar sedes | Autenticado |
+| POST | `/sedes` | Crear sede | Solo ADMIN |
+| PUT | `/sedes/:id` | Editar sede | Solo ADMIN |
+| DELETE | `/sedes/:id` | Desactivar sede (soft-delete) | Solo ADMIN |
+
+### Dashboard
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
+| GET | `/dashboard/stats[?sede_id=N]` | Métricas agregadas | `empleados:listar` |
+
+### Catálogos y usuarios
+| Método | Endpoint | Descripción | Permiso |
+|---|---|---|---|
+| GET/POST/PUT | `/cargos[/:id]` | Catálogo de cargos | Autenticado |
+| GET/POST/PUT | `/empresas[/:id]` | Catálogo de empresas externas | Autenticado |
+| GET/POST/PUT | `/universidades[/:id]` | Catálogo de universidades | Autenticado |
 | GET | `/usuarios` | Listar usuarios | `usuarios:listar` |
 | POST | `/usuarios` | Crear usuario | `usuarios:crear` |
 | PUT | `/usuarios/:id` | Actualizar usuario | `usuarios:editar` |
@@ -182,52 +231,75 @@ Cliente → routes → [authMiddleware] → [checkPermiso] → controller → se
 
 ---
 
-## Despliegue en producción
+## Reglas de negocio destacadas
 
-### Base de datos — Railway MySQL
+### Estado dual del empleado
+`estado_empleado_id = 2` (Inactivo) → `estado = 0`. Cualquier otro estado (Activo, Licencia, Vacaciones, Suspendido, Reingreso) → `estado = 1`. Esta derivación ocurre en el service, nunca en el cliente.
 
-1. Crear cuenta en [railway.app](https://railway.app) → **New Project**
-2. Clic en **Add a service** → **Database** → **MySQL**
-3. Railway aprovisiona la base de datos automáticamente y genera las variables de entorno `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE`
-4. Ir a **MySQL → Data** (pestaña Query) o conectarse con un cliente externo (TablePlus, DBeaver) usando las credenciales de la pestaña **Variables**
-5. Ejecutar todo el esquema SQL para crear las tablas
-6. Ejecutar las migraciones adicionales si la BD ya existía:
-   ```sql
-   ALTER TABLE tb_historial_cargos    ADD COLUMN orden INT DEFAULT 0;
-   ALTER TABLE tb_experiencia_laboral ADD COLUMN orden INT DEFAULT 0;
-   ```
+### Estados del empleado
+| ID | Nombre | `estado` del sistema |
+|---|---|---|
+| 1 | Activo | 1 (activo) |
+| 2 | Inactivo | 0 (inactivo) |
+| 3 | Licencia | 1 (activo) |
+| 4 | Vacaciones | 1 (activo) |
+| 5 | Suspendido | 1 (activo) |
+| 6 | Reingreso | 1 (activo) |
 
-### Servidor — Railway
+### Auto-historial de cargos
+El historial en `tb_historial_cargos` es **completamente automático**. Al crear un empleado se genera el primer registro abierto (`fecha_fin = null`). Al cambiar de cargo, el sistema cierra el período anterior y crea un nuevo registro abierto para el nuevo cargo. El usuario no gestiona este historial manualmente.
 
-1. En el mismo proyecto Railway clic en **Add a service** → **GitHub Repo**
-2. Seleccionar el repositorio y configurar:
-   - **Root Directory**: `server`
-   - **Start Command**: `npm start` (Railway lo detecta solo desde `package.json`)
-3. En la pestaña **Variables** del servicio, agregar:
+### Auto-creación de usuario
+Al crear un empleado con correo y documento, se crea automáticamente una cuenta con rol EMPLEADO y contraseña igual al número de documento. Fire-and-forget: si falla, no bloquea la creación del empleado.
 
-   | Variable | Valor |
-   |---|---|
-   | `JWT_SECRET` | Una cadena larga y aleatoria |
-   | `AUTH_ENABLED` | `true` |
-   | `CLIENT_URL` | URL de Vercel (se obtiene después de desplegar el cliente) |
+### Importación masiva — todo o nada
+Si cualquier fila del Excel tiene error, se rechaza todo el lote. No se inserta ningún empleado hasta que el archivo esté completamente correcto. El endpoint devuelve HTTP 422 con la lista de errores por fila.
 
-   > Las variables `MYSQL*` se inyectan automáticamente al estar en el mismo proyecto Railway.
+### Plantilla Excel
+Generada con `exceljs` en el servidor. Tiene hoja "Listas" (oculta) como fuente de dropdowns reales para Cargo, Tipo Contrato, Sede y Estado. El Estado no se pre-rellena — celdas vacías se tratan como "Activo" para evitar validar filas vacías.
 
-4. Railway hace deploy automáticamente en cada push a la rama principal
-5. Copiar la URL pública del servicio (ej: `https://gestion-rrhh.up.railway.app`) — se necesita para el cliente
+### Zona horaria Colombia (UTC-5)
+Para obtener la fecha actual en Colombia:
+```js
+const ahoraCol = new Date(Date.now() - 5 * 60 * 60 * 1000);
+const hoy = ahoraCol.toISOString().split("T")[0];
+```
+Nunca usar `new Date().toISOString()` directamente — devuelve UTC y puede ser un día diferente.
+
+### Descarga de archivos con JWT
+Los endpoints que devuelven archivos (plantilla Excel) requieren JWT. El cliente debe usar `fetch()` (interceptado por AuthContext) y convertir la respuesta a Blob. Nunca usar `window.location.href` para descargas autenticadas.
+
+### Gotcha: tb_cargos usa `estado`, no `activo`
+`tb_cargos` tiene columna `estado` (1/0). `tb_sedes` usa `activo` (1/0). No intercambiar — la query errónea da "Unknown column 'activo' in 'where clause'".
 
 ---
 
-## Reglas de negocio destacadas
+## Despliegue en producción — Railway
 
-### Auto-historial de cargos
-El historial en `tb_historial_cargos` es **completamente automático**. Al crear un empleado se genera el primer registro abierto (`fecha_fin = null`). Al cambiar de cargo desde la edición de empleado, el sistema: cierra el período anterior con la fecha de hoy y crea un nuevo registro abierto para el nuevo cargo. El usuario no gestiona este historial manualmente.
+El servidor se despliega automáticamente desde `Dayanamholguin/gestion-server` rama `main`.
 
-### Estado dual del empleado
-Los campos `estado_empleado_id` y `estado` (0/1) siempre están sincronizados. La regla: `estado_empleado_id = 2` → `estado = 0` (inactivo); cualquier otro valor → `estado = 1` (activo). Esta derivación ocurre en el service layer, nunca en el cliente.
+### Variables de entorno en Railway
 
-### Auto-creación de usuario
-Al crear un empleado con correo y documento, se crea automáticamente una cuenta de usuario con rol EMPLEADO y contraseña igual al número de documento. Es fire-and-forget: si falla, no bloquea la creación del empleado.
+| Variable | Descripción |
+|---|---|
+| `JWT_SECRET` | Clave secreta para firmar JWT |
+| `AUTH_ENABLED` | `true` en producción |
+| `CLIENT_URL` | URL del frontend en Vercel (para CORS) |
+| `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE` | Inyectadas automáticamente por Railway al estar en el mismo proyecto |
 
-### Drag & drop persistido
-`tb_historial_cargos` y `tb_experiencia_laboral` tienen columna `orden INT DEFAULT 0`. Los endpoints `/reorder` actualizan el índice de posición de cada registro tras un reordenamiento en la UI.
+> **Importante CORS**: `CLIENT_URL` debe coincidir exactamente con la URL del frontend. Si no coincide, el login falla con "Error de conexión" aunque el servidor esté Online.
+
+### Ejecutar migraciones en Railway
+
+1. Abrir la consola MySQL del servicio de base de datos en Railway (pestaña **Query**)
+2. Pegar y ejecutar el contenido de cada archivo `.sql` en `server/migrations/` en orden
+
+### Push al repositorio de producción
+
+```bash
+# Servidor
+git push server-origin "$(git subtree split --prefix=server HEAD)":refs/heads/main --force
+
+# Cliente
+git push client-origin "$(git subtree split --prefix=client HEAD)":refs/heads/main --force
+```

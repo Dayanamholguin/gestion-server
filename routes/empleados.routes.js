@@ -6,12 +6,16 @@ const {
   actualizarEmpleado,
   eliminarEmpleado,
   verificarDocumento,
+  descargarPlantilla,
+  importarEmpleados,
 } = require("../controllers/empleados.controller");
 const checkPermiso = require("../middleware/checkPermiso");
 
 const router = express.Router();
 
-// Específicas antes de paramétricas
+// Rutas específicas antes de paramétricas
+router.get("/plantilla",                         checkPermiso("empleados:crear"), descargarPlantilla);
+router.post("/importar",                         checkPermiso("empleados:crear"), importarEmpleados);
 router.get("/documento/:documento",              verificarDocumento);
 router.get("/documento/:documento/:empleadoId",  verificarDocumento);
 router.put("/estado-masivo", checkPermiso("empleados:desactivar"), actualizarEstadoMasivo);
